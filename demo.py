@@ -9,18 +9,21 @@ import transformers
 
 import sh
 
-sh.rm("-r", "-f", "logs")
-sh.mkdir("logs")
 
 flags.DEFINE_boolean("debug", False, "")
 flags.DEFINE_integer("epochs", 10, "")
 flags.DEFINE_float("lr", 1e-2, "")
-flags.DEFINE_float("momentum", 0.9, "")
+flags.DEFINE_float("momentum", .9, "")
 flags.DEFINE_string("model", "bert-base-uncased", "")
 flags.DEFINE_integer("seq_length", 32, "")
-flags.DEFINE_integer("batch_size", 16, "")
+flags.DEFINE_integer("batch_size", 8, "")
+flags.DEFINE_integer('percent', 5, '')
+
 FLAGS = flags.FLAGS
 
+
+sh.rm("-r", "-f", "logs")
+sh.mkdir("logs")
 
 class IMDBSentimentClassifier(pl.LightningModule):
     def __init__(self):
@@ -29,43 +32,29 @@ class IMDBSentimentClassifier(pl.LightningModule):
             FLAGS.model
         )
         self.loss = th.nn.CrossEntropyLoss(reduction = 'none')
-        self.train_ds = self._prepare_ds('train')
-        self.test_ds = self._prepare_ds('test')
+
 
 
     def prepare_data(self):
-        pass
-        # train_ds = nlp.load_dataset(
-        #     "imdb", split=f'train[:{FLAGS.batch_size if FLAGS.debug else "5%"}]'
-        # )
-        
-        # def _tokenize(x):
-        #     x["input_ids"] = tokenizer.encode(
-        #         x["text"], 
-        #         pad_to_max_length=True,
-        #         max_length=FLAGS.seq_length,
-        #     )
-        #     return x
-
-        # train_ds = train_ds.map(_tokenize)
-        # train_ds.set_format(type="torch", columns=["input_ids", "label"])
-
-
-
-    def _prepare_ds(self, split):
-        ds = nlp.load_dataset(
-            "imdb", split=f'{split}[:{FLAGS.batch_size if FLAGS.debug else "5%"}]'
-        )
         tokenizer = transformers.BertTokenizer.from_pretrained(FLAGS.model)
+
         def _tokenize(x):
             x["input_ids"] = tokenizer.encode(
                 x["text"],
                 max_length = FLAGS.seq_length,
+                truncation=True,
+                padding='max_length'
             )
             return x
-        ds = ds.map(_tokenize)
-        ds.set_format(type="torch", columns=["input_ids", "label"])
-        return ds
+
+        def _prepare_ds(split):
+            ds = nlp.load_dataset('imdb', split=f'{split}[:{FLAGS.batch_size if FLAGS.debug else f"{FLAGS.percent}%"}]')
+            ds = ds.map(_tokenize, batched=True)
+            ds.set_format(type='torch', columns=['input_ids', 'label'])
+            return ds
+
+        self.train_ds, self.test_ds = map(_prepare_ds, ('train', 'test'))
+
 
     # self.train_ds, self.test_ds = map(_prepare_ds, ('train', 'test'))
 
@@ -81,10 +70,14 @@ class IMDBSentimentClassifier(pl.LightningModule):
         return { 'loss' : loss, 'acc': acc }
 
     def training_step(self, batch, batch_idx):
-        import IPython; IPython.embed(); exit(1)
+        logits = self.forward(batch['input_ids'])
+        loss = self.loss(logits, batch['label']).mean()
+        return {'loss': loss, 
+                'log': {'train_loss': loss}
+            }
 
-    def validation_epoch_end(self, ouputs):
-        losses = th.cat([ o['loss'] for o in outputs], 0).mean()
+    def validation_epoch_end(self, outputs):
+        loss = th.cat([ o['loss'] for o in outputs], 0).mean()
         acc = th.cat([ o['acc'] for o in outputs], 0).mean()
         out = {'val_loss': loss, 'val_acc': acc}
         return {**out, 'log': out}
@@ -116,9 +109,9 @@ def main(_):
         gpus=(1 if th.cuda.is_available() else 0),
         max_epochs=FLAGS.epochs,
         fast_dev_run=FLAGS.debug,
+        logger = pl.loggers.TensorBoardLogger('logs/', name='imdb', version=0)
     )
     trainer.fit(model)
-    logging.info("hello")
 
 
 if __name__ == "__main__":
