@@ -9,29 +9,85 @@ import transformers
 
 import sh
 
+sh.rm('-r', '-f','logs')
+sh.mkdir('logs') 
+
+flags.DEFINE_boolean('debug', False, '')
 flags.DEFINE_integer('epochs', 10, '')
 flags.DEFINE_float('lr', 1e-2, '')
 flags.DEFINE_float('momentum', .9, '')
+flags.DEFINE_string('model', 'bert-base-uncased', '')
+flags.DEFINE_integer('seq_length', 32, '')
+flags.DEFINE_integer('batch_size', 16, '')
 FLAGS = flags.FLAGS
 
-sh.rm('-r', '-f','logs')
-sh.mkdir('logs')
+
 
 class IMDBSentimentClassifier(pl.LightningModule):
     def __init__(self):
         super().__init__()
+        self.model = transformers.BertForSequenceClassification.from_pretrained(FLAGS.model)
 
     def prepare_data(self):
-        nlp.load_dataset('imdb', split='train[:5%]')
+        train_ds = nlp.load_dataset('imdb', split=f'train[:{FLAGS.batch_size if FLAGS.debug else "5%"}]')
+        tokenizer = transformers.BertTokenizer.from_pretrained(FLAGS.model)
+        def _tokenize(x):
+            x['input_ids'] = tokenizer.encode(
+                x['text'],
+                max_length=FLAGS.seq_length,
+                padding=True
+            )
+            return x
+        train_ds = train_ds.map(_tokenize)
+        train_ds.set_format(type='torch', columns=['input_ids', 'label'])
+        import IPython; IPython.embed(); exit(1)
+        
+    def _tokenize(x):
+        import IPython; IPython.embed(); exit(1)
+        
+        x['input_ids'] = tokenizer.encode(
+            x['text'],
+            max_length=FLAGS.seq_length,
+            
+        )
+
+    def _prepare_ds(split):        
+        ds = nlp.load_dataset('imdb', split=f'{split}[:{FLAGS.batch_size if FLAGS.debug else "5%"}]')
+        ds = ds.map(_tokenize)
+        ds.set_format(type='torch', columns=['input-ids', 'label'])
+        return ds
+    
+    # self.train_ds, self.test_ds = map(_prepare_ds, ('train', 'test'))
+
 
     def forward(self, batch):
-        pass
+        import IPython; IPython.embed(); exit(1)
+        
 
     def training_step(self, batch, batch_idx):
+        import IPython; IPython.embed(); exit(1)
+        
+    def validation_epoch_end(self, ouputs):
+        import IPython; IPython.embed(); exit(1)
+        
+
+    def validation_step(self, batch, batch_idx):
         pass
 
     def train_dataloader(self):
-        pass
+        return th.utils.data.DataLoader(
+            self.train_ds,
+            batch_size = FLAGS.batch_size,
+            drop_last = True,
+            shuffle = True,
+        )
+    def val_dataloader(self):
+        return th.utils.data.DataLoader(
+            self.train_ds,
+            batch_size = FLAGS.batch_size,
+            drop_last = False,
+            shuffle = False,
+        )
 
     def configure_optimizers(self):
         return th.optim.SGD(
@@ -47,6 +103,7 @@ def main(_):
         default_root_dir='logs',
         gpus=(1 if th.cuda.is_available() else 0),
         max_epochs = FLAGS.epochs,
+        fast_dev_run=FLAGS.debug
     )
     trainer.fit(model)
     logging.info("hello")
